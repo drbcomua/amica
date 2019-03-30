@@ -3,7 +3,7 @@ This folder used for prime numbers search utilities and their results.
 
 The following command used to compile uiprimes32:
 
-    g++ -O6 uiprimes32.cpp -o uiprimes32
+    g++ -O3 uiprimes32.cpp -o uiprimes32
 
 The result of running
 
