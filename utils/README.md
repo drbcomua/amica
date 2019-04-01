@@ -22,3 +22,14 @@ Sample result:
     real    141m46.326s
     user    140m42.063s
     sys     0m19.453s
+
+64-bit utility
+==============
+
+Compile it:
+
+    g++ -O3 uiprimes64part.cpp -o uiprimes64part
+
+Run as follows:
+
+    ./uiprimes64part 123456
