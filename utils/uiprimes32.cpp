@@ -3,46 +3,51 @@
 */
 
 #include <iostream>
-#include <fstream>
-#include <climits>
 #include <vector>
+#include <inttypes.h>
+#include <fstream>
 
-using namespace std;
+const uint16_t mask[] = {
+	0b0000000000000001,
+	0b0000000000000010,
+	0b0000000000000100,
+	0b0000000000001000,
+	0b0000000000010000,
+	0b0000000000100000,
+	0b0000000001000000,
+	0b0000000010000000,
+	0b0000000100000000,
+	0b0000001000000000,
+	0b0000010000000000,
+	0b0000100000000000,
+	0b0001000000000000,
+	0b0010000000000000,
+	0b0100000000000000,
+	0b1000000000000000
+};
 
-inline void save(ofstream& f, unsigned& c) {
-  f.write(reinterpret_cast <char*> (&c), sizeof(unsigned));
+inline void save(std::ofstream& f, uint64_t p) {
+	uint32_t c = static_cast<uint32_t>(p);
+    f.write(reinterpret_cast <char*> (&c), sizeof(uint32_t));
 }
 
 int main() {
-  ofstream fh ("uiprimes32.dat", ofstream::out | ofstream::binary);
-// To Do: check if uint32_t works better on different platforms
-  unsigned k = 0;
-  short l = 1;
-  const unsigned MAXK = (UINT_MAX - 1) / 6;
-  unsigned candidate;
-
-  vector<unsigned> primes;
-  primes.push_back(candidate = 2);
-  save(fh, candidate);
-  primes.push_back(candidate = 3);
-  save(fh, candidate);
-
-  lbl_1:
-  while(k < MAXK) {
-    if ((l = -l) == -1) ++k;
-    unsigned candidate = 6 * k + l; // candidate prime
-
-    size_t i = 0;    // prime index
-    unsigned long p; // test known prime as divisor
-    do {
-      if(!(candidate % (p = primes[++i]))) goto lbl_1;
-    } while (p * p < candidate);
-
-    primes.push_back(candidate); //no known divisors found, so this is new prime
-    save(fh, candidate);
-  }
-
-  fh.close();
-
-  return 0;
+	std::ofstream fh ("uiprimes32.dat", std::ofstream::out | std::ofstream::binary);
+	const uint32_t MAX = 0xFFFFFFFF;
+	const uint32_t aSize = 0x100000000/sizeof(uint16_t)/8;
+	std::vector<uint16_t> primes(aSize);
+	for (uint64_t i=2; i<MAX; ++i) {
+		if(!(primes[i>>4]&mask[i&0b1111])) {
+			for (uint64_t j = i+i; j<MAX; j += i) {
+				primes[j>>4] |= mask[j&0b1111];
+			}
+		}
+	}
+	for (uint64_t i=2; i<MAX; ++i) {
+		if(!(primes[i>>4]&mask[i&0b1111])) {
+			save(fh, i);
+		}
+	}
+	fh.close();
+	return 0;
 }
