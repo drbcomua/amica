@@ -34,9 +34,10 @@ inline void save(std::ofstream& f, uint64_t p) {
 int main() {
 	std::ofstream fh ("uiprimes32.dat", std::ofstream::out | std::ofstream::binary);
 	const uint32_t MAX = 0xFFFFFFFF;
+	const uint32_t MAXi = 0xFFFF;
 	const uint32_t aSize = 0x100000000/sizeof(uint16_t)/8;
 	std::vector<uint16_t> primes(aSize);
-	for (uint64_t i=2; i<MAX; ++i) {
+	for (uint32_t i=2; i<MAXi; ++i) {
 		if(!(primes[i>>4]&mask[i&0b1111])) {
 			for (uint64_t j = i+i; j<MAX; j += i) {
 				primes[j>>4] |= mask[j&0b1111];

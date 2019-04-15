@@ -19,9 +19,9 @@ Sample result:
 
     $ time ./uiprimes32
 
-    real    2m10.978s
-    user    2m2.922s
-    sys     0m5.813s
+    real    1m9.035s
+    user    1m3.031s
+    sys     0m4.938s
 
 64-bit utility
 ==============
