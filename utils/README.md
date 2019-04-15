@@ -14,14 +14,14 @@ is uiprimes32.dat file with all primes less than 2^32.
     Expected size: 813,120,884 bytes
     MD5 sum: 4d052d40fd0ebfa2f015d60062782b0d
 
-Current utility version uses one thread and runs 2..4 hours depending on processor core speed.
+Current utility version uses one thread and runs few minutes:
 Sample result:
 
     $ time ./uiprimes32
 
-    real    141m46.326s
-    user    140m42.063s
-    sys     0m19.453s
+    real    2m10.978s
+    user    2m2.922s
+    sys     0m5.813s
 
 64-bit utility
 ==============
@@ -33,3 +33,10 @@ Compile it:
 Run as follows:
 
     ./uiprimes64part 123456
+
+The utility requires uiprimes32.dat file prepared by uiprimes32.
+To test that uiprimes64part works properly, run:
+
+    ./uiprimes64part 0
+    
+The resulting file should be placed at 00/00/00/00.dat and be absolutely the same as uiprimes32.dat (see above).
