@@ -7,6 +7,7 @@
 #include <inttypes.h>
 #include <fstream>
 
+// Mask to translate lower 4 bits to 'hot unit'
 const uint16_t mask[] = {
 	0b0000000000000001,
 	0b0000000000000010,
@@ -26,27 +27,35 @@ const uint16_t mask[] = {
 	0b1000000000000000
 };
 
-inline void save(std::ofstream& f, uint64_t p) {
-	uint32_t c = static_cast<uint32_t>(p);
-    f.write(reinterpret_cast <char*> (&c), sizeof(uint32_t));
-}
+// Mask to initialize array of primes (as we know 2 is prime)
+const uint16_t mask2 = 0b0101010101010101;
 
 int main() {
 	std::ofstream fh ("uiprimes32.dat", std::ofstream::out | std::ofstream::binary);
-	const uint32_t MAX = 0xFFFFFFFF;
-	const uint32_t MAXi = 0xFFFF;
-	const uint32_t aSize = 0x100000000/sizeof(uint16_t)/8;
+	const uint32_t aSize = 0x100000000/sizeof(uint16_t)/8; // size of 32-bit range packed into 16-bit words
 	std::vector<uint16_t> primes(aSize);
-	for (uint32_t i=2; i<MAXi; ++i) {
-		if(!(primes[i>>4]&mask[i&0b1111])) {
-			for (uint64_t j = i*i; j<MAX; j += i) {
-				primes[j>>4] |= mask[j&0b1111];
-			}
-		}
+	
+	// Init by exluding even numbers except 2
+	for (uint32_t i=0; i<aSize; ++i) {
+		primes[i] = mask2;
 	}
-	for (uint64_t i=2; i<MAX; ++i) {
+	primes[0] &= 0b1111111111111011;
+	
+	uint32_t i=3;
+	do { // Check divisor up to sqrt(UINT32_MAX) = UINT16_MAX
 		if(!(primes[i>>4]&mask[i&0b1111])) {
-			save(fh, i);
+			// bybass even numbers and start from squared prime
+			uint64_t j = i*i;
+			do {
+				primes[j>>4] |= mask[j&0b1111];
+			} while ((j += i+i) < UINT32_MAX);
+		}
+	} while ((i += 2) < UINT16_MAX);
+	
+	for (uint64_t i=2; i<UINT32_MAX; ++i) { // save found primes
+		if(!(primes[i>>4]&mask[i&0b1111])) {
+			uint32_t c = static_cast<uint32_t>(i);
+			fh.write(reinterpret_cast <char*> (&c), sizeof(uint32_t));
 		}
 	}
 	fh.close();
