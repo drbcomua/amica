@@ -39,7 +39,7 @@ int main() {
 	std::vector<uint16_t> primes(aSize);
 	for (uint32_t i=2; i<MAXi; ++i) {
 		if(!(primes[i>>4]&mask[i&0b1111])) {
-			for (uint64_t j = i+i; j<MAX; j += i) {
+			for (uint64_t j = i*i; j<MAX; j += i) {
 				primes[j>>4] |= mask[j&0b1111];
 			}
 		}
