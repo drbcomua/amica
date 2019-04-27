@@ -11,10 +11,34 @@
 #include <sstream>
 #include <iomanip>
 #include <climits>
+#include <vector>
 #include <stdlib.h>
 #include <inttypes.h>
 
 using namespace std;
+
+// Mask to translate lower 4 bits to 'hot unit'
+const uint16_t mask[] = {
+	0b0000000000000001,
+	0b0000000000000010,
+	0b0000000000000100,
+	0b0000000000001000,
+	0b0000000000010000,
+	0b0000000000100000,
+	0b0000000001000000,
+	0b0000000010000000,
+	0b0000000100000000,
+	0b0000001000000000,
+	0b0000010000000000,
+	0b0000100000000000,
+	0b0001000000000000,
+	0b0010000000000000,
+	0b0100000000000000,
+	0b1000000000000000
+};
+
+// Mask to initialize array of primes (as we know 2 is prime)
+const uint16_t mask2 = 0b0101010101010101;
 
 const uint64_t module32 = 0x100000000; // 2^32
 
@@ -84,67 +108,39 @@ int main(int argc, char** argv) {
     cout << "Cannot create slice file:" << fpath.str() << endl;
     return 3;
   }
-  fstream oh (fpath.str().c_str(), ios::in | ios::out | ios::binary);
+  fstream oh (fpath.str().c_str(), ios::out | ios::binary);
   cout << "Slice file to work with: " << fpath.str().c_str() << endl;
 
-  size_t size64 = 0;
+    const uint32_t aSize = 0x100000000/sizeof(uint16_t)/8; // size of 32-bit range packed into 16-bit words
+	std::vector<uint16_t> primes(aSize);
 
-  if(!file_is_empty(oh)) {
-    oh.seekg(0, ios::end);
-    size64 = oh.tellg();
-  }
-  uint32_t num_primes_64 = size64/sizeof(uint32_t);
-
-  cout << "64-bit primes file size: " << size64 << "; number of stored primes: " << num_primes_64 << endl;
-
-  uint64_t last_prime;
-  if(num_primes_64==0) {
-    if(slice_number) {
-      last_prime = slice_number * module32 - slice_number * module32 % 6 + 1; // first odd before slice
-    } else { // 0 slice should start from 5 as 2 and 3 are not in 6k+-1 sieve
-      oh.clear();
-      oh.seekp(0, ios::beg); // put cursor to the beginning of empty file
-      save(oh, last_prime = 2);
-      save(oh, last_prime = 3);
-      save(oh, last_prime = 5);
-    }
-    cout << "No 64-bit primes known yet, so setting last_prime=" << last_prime << endl;
-  } else {
-    oh.seekg((num_primes_64 - 1) * sizeof(uint32_t), ios::beg);
-    read(oh, last_prime, slice_number);
-    cout << "Largest 64-bit prime known: last_prime=" << last_prime << endl;
-  }
-  oh.clear();
-  oh.seekp(0, ios::end); // put cursor to the end
-
-  uint64_t k = (last_prime + 1) / 6;
-  short l = last_prime - 6 * k;
-  
-  uint64_t candidate;
-
-  cout << "Last known prime: " << last_prime << " = 6*" << k << (l<0?"-":"+") << "1" << endl;
-
-  lbl_1:
-  while(1) {
-    if ((l = -l) == -1) ++k;
-    candidate = 6 * k + l; // candidate prime
-
-    if (slice_number != candidate / module32) break; // job's done for this slice
-
-    size_t i = 0; // prime index
-    uint64_t p; // test known prime as divisor
-    do {
-      if(!(candidate % (p = prime32[++i]))) goto lbl_1;
-    } while ((p * p < candidate) && (i < num_primes - 1));
-
-    i = 0; // at this point i counts 64-bit primes
-
-    save(oh, candidate);
-    oh.flush();
+	// Init by excluding even numbers
+	for (uint32_t i=0; i<aSize; ++i) {
+		primes[i] = mask2;
+	}
+  if (!slice_number) {
+    primes[0] &= 0b1111111111111011;
+    primes[0] |= 0b11;
   }
 
-  oh.close();
-  cout << "Search finished" << endl;
+	uint32_t i=1;
+	do {
+      uint64_t p = prime32[i];
+			uint64_t j = slice_number ? p - slice_number*module32%p : p*p;
+      if(!(j%2)) j+=p;
+			while (j <= UINT32_MAX) {
+				primes[j>>4] |= mask[j&0b1111];
+        j += p+p;
+			}
+	} while (++i < num_primes);
+
+	for (uint64_t i=0; i<=UINT32_MAX; ++i) { // save found primes
+		if(!(primes[i>>4]&mask[i&0b1111])) {
+			uint32_t c = static_cast<uint32_t>(i);
+			oh.write(reinterpret_cast <char*> (&c), sizeof(uint32_t));
+		}
+	}
+	oh.close();
 
   return 0;
 }
