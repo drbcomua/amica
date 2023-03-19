@@ -6,141 +6,105 @@
   If AABBCCDD is top 32 bits, then hierarchy is: AA/BB/CC/DD.dat
 */
 
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <iomanip>
-#include <climits>
 #include <vector>
-#include <stdlib.h>
-#include <inttypes.h>
+#include <fstream>
+#include <iostream>
+#include <iomanip>
 
 using namespace std;
 
-// Mask to translate lower 4 bits to 'hot unit'
-const uint16_t mask[] = {
-	0b0000000000000001,
-	0b0000000000000010,
-	0b0000000000000100,
-	0b0000000000001000,
-	0b0000000000010000,
-	0b0000000000100000,
-	0b0000000001000000,
-	0b0000000010000000,
-	0b0000000100000000,
-	0b0000001000000000,
-	0b0000010000000000,
-	0b0000100000000000,
-	0b0001000000000000,
-	0b0010000000000000,
-	0b0100000000000000,
-	0b1000000000000000
-};
-
-// Mask to initialize array of primes (as we know 2 is prime)
-const uint16_t mask2 = 0b0101010101010101;
-
-const uint64_t module32 = 0x100000000; // 2^32
-
-inline bool file_is_empty(fstream& f)
-{
-    return f.peek() == fstream::traits_type::eof();
+inline uint32_t index2int(uint32_t i) {
+    return (i<<1)+1;
 }
 
-inline void save(fstream& f, uint64_t& c) {
-  uint32_t c_mod = c % module32;
-  f.write(reinterpret_cast <char*> (&c_mod), sizeof(uint32_t));
+inline uint32_t int2index(uint32_t i) {
+    return (i-1)>>1;
 }
 
-inline void read(fstream& f, uint64_t& c, const uint32_t& top_bits) {
-  uint32_t c_mod;
-  f.read(reinterpret_cast <char*> (&c_mod), sizeof(uint32_t));
-  c = c_mod + top_bits * module32;
+inline void write(ofstream &fh, uint32_t p) {
+    fh.write(reinterpret_cast <char*> (&p), sizeof(uint32_t));
 }
 
 int main(int argc, char** argv) {
-  if(argc != 2) {
-    cout << "Run this utility as follows:\n\t"
-         << argv[0]
-         << " {slice_number}\nWhere {slice_number} is 0..4294967295 number which is top 32 bits of prime numbers to be found"
-         << endl;
-    return 1;
-  }
-  uint32_t slice_number;
-  stringstream(argv[1]) >> slice_number;
-  short p3 = slice_number % 0x100;
-  short p2 = (slice_number >> 8) % 0x100;
-  short p1 = (slice_number >> 16) % 0x100;
-  short p0 = slice_number >> 24;
+    const uint32_t MAX_VALUE = 0xFFFFFFFF;
+    const uint32_t MAX_INDEX = int2index(MAX_VALUE);
 
-  ostringstream path;
-  path << hex
-    << setfill('0') << setw(2) << p0 << "/"
-    << setfill('0') << setw(2) << p1 << "/"
-    << setfill('0') << setw(2) << p2 << "/";
-  cout << path.str() << endl;
+    vector<bool> primes(MAX_INDEX, true);
 
-  ostringstream fpath;
-  fpath << path.str() << hex << setfill('0') << setw(2) << p3 << ".dat";
+    if(argc != 2) {
+        cout << "Run this utility as follows:\n\t"
+             << argv[0]
+             << " {slice_number}\nWhere {slice_number} is 0..4294967295 number which is top 32 bits of prime numbers to be found"
+             << endl;
+        return 1;
+    }
+    uint64_t slice_number;
+    stringstream(argv[1]) >> slice_number;
+    unsigned short p3 = slice_number % 0x100;
+    unsigned short p2 = (slice_number >> 8) % 0x100;
+    unsigned short p1 = (slice_number >> 16) % 0x100;
+    unsigned short p0 = slice_number >> 24;
 
-  if(system(("mkdir -p " + path.str()).c_str())) {
-    cout << "Cannot create folder: " << path.str() << endl;
-    return 2;
-  }
+    ostringstream path;
+    path << hex
+         << setfill('0') << setw(2) << p0 << "/"
+         << setfill('0') << setw(2) << p1 << "/"
+         << setfill('0') << setw(2) << p2 << "/";
+    cout << path.str() << endl;
 
-  // first load known uint32_t primes
-  cout << "Loading primes..." << endl;
-  ifstream ih ("uiprimes32.dat", ios::in | ios::binary);
+    ostringstream fpath;
+    fpath << path.str() << hex << setfill('0') << setw(2) << p3 << ".dat";
 
-  ih.seekg(0, ios::end);
-  size_t size = ih.tellg();
-  uint32_t num_primes = size/sizeof(uint32_t) - 1;
-  uint32_t* prime32 = new uint32_t[num_primes];
+    if(system(("mkdir -p " + path.str()).c_str())) {
+        cout << "Cannot create folder: " << path.str() << endl;
+        return 2;
+    }
 
-  ih.seekg(0);
-  ih.read(reinterpret_cast <char*> (prime32), num_primes * sizeof(uint32_t));
-  ih.close();
+    // first load known uint32_t primes
+    cout << "Loading primes..." << endl;
+    ifstream ih ("uiprimes32.dat", ios::in | ios::binary);
 
-  cout << num_primes << " primes loaded to prime32 array" << endl;
+    ih.seekg(0, ios::end);
+    size_t size = ih.tellg();
+    uint32_t num_primes = size/sizeof(uint32_t) - 1;
+    auto* prime32 = new uint32_t[num_primes];
 
-  // then determine largest known uint64_t prime
-  if(system(("touch " + fpath.str()).c_str())) {
-    cout << "Cannot create slice file:" << fpath.str() << endl;
-    return 3;
-  }
-  fstream oh (fpath.str().c_str(), ios::out | ios::binary);
-  cout << "Slice file to work with: " << fpath.str().c_str() << endl;
+    ih.seekg(0);
+    ih.read(reinterpret_cast <char*> (prime32), num_primes * sizeof(uint32_t));
+    ih.close();
 
-    const uint32_t aSize = 0x100000000/sizeof(uint16_t)/8; // size of 32-bit range packed into 16-bit words
-	std::vector<uint16_t> primes(aSize);
+    cout << num_primes << " primes loaded to prime32 array" << endl;
 
-	// Init by excluding even numbers
-	for (uint32_t i=0; i<aSize; ++i) {
-		primes[i] = mask2;
-	}
-  if (!slice_number) {
-    primes[0] &= 0b1111111111111011;
-    primes[0] |= 0b11;
-  }
+    if(system(("touch " + fpath.str()).c_str())) {
+        cout << "Cannot create slice file:" << fpath.str() << endl;
+        return 3;
+    }
 
-	uint32_t i=1;
-	do {
-      uint64_t p = prime32[i];
-			uint64_t j = slice_number ? p - slice_number*module32%p : p*p;
-      if(!(j%2)) j+=p;
-			while (j <= UINT32_MAX) {
-				primes[j>>4] |= mask[j&0b1111];
-        j += p+p;
-			}
-	} while (++i < num_primes);
+    ofstream oh (fpath.str().c_str(), ofstream::out | ofstream::binary);
+    cout << "Slice file to work with: " << fpath.str().c_str() << endl;
 
-	for (uint64_t i=0; i<=UINT32_MAX; ++i) { // save found primes
-		if(!(primes[i>>4]&mask[i&0b1111])) {
-			uint32_t c = static_cast<uint32_t>(i);
-			oh.write(reinterpret_cast <char*> (&c), sizeof(uint32_t));
-		}
-	}
-	oh.close();
+    for (uint32_t i=1; i < num_primes; ++i) { // skipping 2
+        uint64_t d = prime32[i]; // prime divisor
+        if ((d*d)>>32 > slice_number) {
+            break; // divisor is too big for current slice
+        }
+        uint64_t mod = (slice_number<<32)%d;
+        uint32_t shift = slice_number?int2index(d-mod+d*(mod%2)):int2index(d)+d;
+        for (uint32_t j=shift; j<=MAX_INDEX; j+=d) {
+            primes[j]=false;
+        }
+    }
 
-  return 0;
+    if (slice_number == 0) {
+        write(oh, 2);
+        primes[0]=false; // 1 is not prime
+    }
+    for (uint64_t i=0; i<MAX_INDEX; ++i) {
+        if (primes[i]) {
+            write(oh, index2int(i));
+        }
+    }
+
+    oh.close();
+    return 0;
 }
