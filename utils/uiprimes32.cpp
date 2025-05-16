@@ -4,69 +4,105 @@
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#ifdef __GNUC__
+#include <immintrin.h>
+#endif
+
+// SIMD block: only this function uses AVX2, avoiding ABI mismatches
+#ifdef __GNUC__
+__attribute__((target("avx2")))
+#endif
+void collect_primes_simd(const uint64_t* sieve, uint64_t words, uint64_t low, uint64_t seg_bits, std::vector<uint32_t>& outvec) {
+    uint64_t w = 0;
+#ifdef __AVX2__
+    for (; w + 4 <= words; w += 4) {
+        __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(&sieve[w]));
+        if (_mm256_testz_si256(v, v)) continue;
+        for (int k = 0; k < 4; ++k) {
+            uint64_t word = sieve[w + k];
+            while (word) {
+                int bit = __builtin_ctzll(word);
+                uint64_t idx_bit = (w + k) * 64 + bit;
+                outvec.push_back(static_cast<uint32_t>(low + 2 * idx_bit));
+                word &= word - 1;
+            }
+        }
+    }
+#endif
+    for (; w < words; ++w) {
+        uint64_t word = sieve[w];
+        while (word) {
+            int bit = __builtin_ctzll(word);
+            uint64_t idx_bit = w * 64 + bit;
+            outvec.push_back(static_cast<uint32_t>(low + 2 * idx_bit));
+            word &= word - 1;
+        }
+    }
+}
 
 int main() {
-    // Upper bound (2^32 - 1)
     constexpr uint64_t MAX_N = 0xFFFFFFFFULL;
-    // Size of each segment in memory (adjust to 32 or 64 MB as needed)
-    constexpr uint64_t SEGMENT_BYTES = 32ULL * 1024 * 1024; // 32 MB
-    // Each byte here represents an odd number, so range covers twice as many integers
-    constexpr uint64_t SEGMENT_RANGE = SEGMENT_BYTES * 2;
+    constexpr uint64_t SEGMENT_BYTES = 32ULL * 1024 * 1024;
+    constexpr uint64_t segment_bits = SEGMENT_BYTES * 8;
 
-    // Pre-sieve up to sqrt(MAX_N)
-    uint32_t sqrtN = static_cast<uint32_t>(std::sqrt(MAX_N));
-    std::vector<bool> is_prime_small(sqrtN + 1, true);
+    // Pre-sieve small primes up to sqrt(MAX_N)
+    auto sqrtN = static_cast<uint32_t>(std::sqrt(MAX_N));
+    std::vector is_prime_small(sqrtN + 1, true);
     is_prime_small[0] = is_prime_small[1] = false;
     std::vector<uint32_t> primes;
     for (uint32_t i = 2; i <= sqrtN; ++i) {
         if (is_prime_small[i]) {
             primes.push_back(i);
-            for (uint64_t j = uint64_t(i) * i; j <= sqrtN; j += i) {
+            for (uint64_t j = static_cast<uint64_t>(i) * i; j <= sqrtN; j += i)
                 is_prime_small[j] = false;
-            }
         }
     }
 
-    // Open output file for writing primes
+    uint64_t total_odds = (MAX_N - 3) / 2 + 1;
+    auto num_segments = static_cast<uint32_t>((total_odds + segment_bits - 1) / segment_bits);
+
+    // Open output file and write the first prime
     std::ofstream out("uiprimes32.dat", std::ios::binary);
     if (!out) {
         std::cerr << "Cannot open output file.\n";
         return 1;
     }
+    uint32_t two = 2;
+    out.write(reinterpret_cast<char*>(&two), sizeof(two));
 
-    // Write the first prime (2)
-    uint32_t prime = 2;
-    out.write(reinterpret_cast<char*>(&prime), sizeof(prime));
+    // Sequential segmented sieve
+    std::vector<uint64_t> sieve;
+    std::vector<uint32_t> segment_primes;
+    for (uint32_t idx = 0; idx < num_segments; ++idx) {
+        uint64_t low_bit  = static_cast<uint64_t>(idx) * segment_bits;
+        uint64_t high_bit = std::min(low_bit + segment_bits - 1, total_odds - 1);
+        uint64_t low  = 3 + 2 * low_bit;
+        uint64_t seg_bits = high_bit - low_bit + 1;
+        uint64_t words = (seg_bits + 63) / 64;
 
-    // Segmented sieve for the rest
-    for (uint64_t low = 3; low <= MAX_N; low += SEGMENT_RANGE) {
-        uint64_t high = std::min(low + SEGMENT_RANGE - 1, MAX_N);
-        // Only odd numbers in [low, high]: count = ((high - low) / 2) + 1
-        uint64_t segment_size = ((high - low) / 2) + 1;
-        std::vector<char> segment(segment_size, 1);
+        // Initialize sieve bits
+        sieve.assign(words, ~0ULL);
+        if (seg_bits & 63)
+            sieve[words - 1] = (~0ULL) >> (64 - (seg_bits & 63));
 
-        // Mark non-primes in current segment
+        // Mark composites
         for (uint32_t p : primes) {
-            if (p == 2) continue; // skip even prime
-            uint64_t p2 = uint64_t(p) * p;
-            if (p2 > high) break;
-            // Find the first multiple of p within [low, high]
-            uint64_t start = (low + p - 1) / p * p;
-            if (start < p2) start = p2;
-            // Make sure start is odd
+            if (p == 2) continue;
+            uint64_t p2 = static_cast<uint64_t>(p) * p;
+            if (p2 > low + 2 * high_bit) break;
+            uint64_t start = std::max(p2, ((low + p - 1) / p) * p);
             if ((start & 1) == 0) start += p;
-            // Mark every 2*p (only odd multiples)
-            for (uint64_t j = start; j <= high; j += 2ULL * p) {
-                segment[(j - low) / 2] = 0;
-            }
+            uint64_t bit_index = (start - low) / 2;
+            for (uint64_t b = bit_index; b < seg_bits; b += p)
+                sieve[b >> 6] &= ~(1ULL << (b & 63));
         }
 
-        // Write primes from this segment
-        for (uint64_t i = 0; i < segment_size; ++i) {
-            if (segment[i]) {
-                prime = static_cast<uint32_t>(low + 2 * i);
-                out.write(reinterpret_cast<char*>(&prime), sizeof(prime));
-            }
+        // Collect and write primes for this segment
+        segment_primes.clear();
+        segment_primes.reserve(static_cast<size_t>(seg_bits / std::log(low + 1)));
+        collect_primes_simd(sieve.data(), words, low, seg_bits, segment_primes);
+        for (uint32_t p : segment_primes) {
+            out.write(reinterpret_cast<char*>(&p), sizeof(p));
         }
     }
 
