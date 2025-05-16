@@ -1,50 +1,46 @@
-/*
-  Utility to calculate all unsigned long primes
-*/
-
+#include <cstdint>
 #include <vector>
+#include <cmath>
 #include <fstream>
-
-using namespace std;
-
-inline uint32_t index2int(uint32_t i) {
-    return (i << 1) + 3;
-}
-
-inline uint32_t int2index(uint32_t i) {
-    return (i - 3) >> 1;
-}
-
-inline void write(ofstream &fh, uint32_t p) {
-    fh.write(reinterpret_cast <char *> (&p), sizeof(uint32_t));
-}
+#include <iostream>
 
 int main() {
-    const uint32_t MAX_VALUE = 0xFFFFFFFF;
-    const uint32_t MAX_INDEX = int2index(MAX_VALUE);
-    const uint32_t SQRT_MAX_INDEX = int2index(MAX_VALUE >> 16);
+    constexpr uint32_t MAX_PRIME = 0xFFFFFFFF; // 2^32 - 1
+    constexpr uint32_t SIEVE_LIMIT = (MAX_PRIME - 3) / 2 + 1; // Count of odd numbers from 3 to MAX_PRIME
 
-    std::vector<bool> primes(MAX_INDEX, true);
+    std::vector is_prime(SIEVE_LIMIT, true); // is_prime[i] -> 2*i + 3 is prime
 
-    ofstream fh("uiprimes32.dat", ofstream::out | ofstream::binary);
-    write(fh, 2);
+    const auto sqrt_limit = static_cast<uint32_t>(std::sqrt(MAX_PRIME));
 
-    for (uint32_t i = 0; i < SQRT_MAX_INDEX; ++i) {
-        if (primes[i]) {
-            uint32_t prime = index2int(i);
-            write(fh, prime);
-            for (uint64_t j = prime * prime; j <= MAX_VALUE; j += (prime << 1)) {
-                primes[int2index(j)] = false;
+    for (uint32_t i = 0; 2 * i + 3 <= sqrt_limit; ++i) {
+        if (is_prime[i]) {
+            const uint32_t p = 2 * i + 3;
+            // Start marking from p*p
+            uint32_t start = (p * p - 3) / 2;
+            for (uint32_t j = start; j < SIEVE_LIMIT; j += p) {
+                is_prime[j] = false;
             }
         }
     }
 
-    for (uint32_t i = SQRT_MAX_INDEX; i < MAX_INDEX; ++i) {
-        if (primes[i]) {
-            write(fh, index2int(i));
+    std::ofstream out("uiprimes32.dat", std::ios::binary);
+    if (!out) {
+        std::cerr << "Cannot open output file.\n";
+        return 1;
+    }
+
+    // Write 2 separately
+    uint32_t prime = 2;
+    out.write(reinterpret_cast<char*>(&prime), sizeof(uint32_t));
+
+    for (uint32_t i = 0; i < SIEVE_LIMIT; ++i) {
+        if (is_prime[i]) {
+            prime = 2 * i + 3;
+            out.write(reinterpret_cast<char*>(&prime), sizeof(uint32_t));
         }
     }
 
-    fh.close();
+    out.close();
+    std::cout << "Prime generation complete.\n";
     return 0;
 }
