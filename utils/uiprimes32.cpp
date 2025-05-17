@@ -5,7 +5,7 @@
 #include <iostream>
 #include <algorithm>
 
-#ifdef __GNUC__
+#if defined(__x86_64__)
 #include <immintrin.h>    // x86 AVX2
 #endif
 #if defined(__aarch64__)
@@ -13,7 +13,7 @@
 #endif
 
 // SIMD-accelerated collection of primes from the bit-sieve
-#ifdef __GNUC__
+#if defined(__x86_64__)
 __attribute__((target("avx2")))
 #endif
 void collect_primes_simd(const uint64_t* sieve, uint64_t words,
@@ -123,8 +123,11 @@ int main(int argc, char* argv[]) {
             uint64_t start = std::max(p2, ((low + p - 1) / p) * p);
             if ((start & 1) == 0) start += p;
             uint64_t bit_index = (start - low) / 2;
-            for (uint64_t b = bit_index; b < seg_bits; b += p)
+            // Prefetch the sieve word for this prime's first multiple
+            __builtin_prefetch(&sieve[bit_index >> 6], 1, 1);
+            for (uint64_t b = bit_index; b < seg_bits; b += p) {
                 sieve[b >> 6] &= ~(1ULL << (b & 63));
+            }
         }
 
         // Collect and write primes
