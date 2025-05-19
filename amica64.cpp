@@ -2,11 +2,14 @@
 #include <fstream>
 #include <iostream>
 #include <string>
-#include <numeric>
+#include <numeric>   // for std::gcd
+#include <thread>
+#include <mutex>
 
 //------------------------------------------------------------------------------
 // Global list of 32-bit primes
 static std::vector<uint32_t> primes;
+static std::mutex io_mutex;  // protects both cout and file output
 
 // Load primes from your binary file
 void load_primes(const std::string& filename) {
@@ -31,7 +34,7 @@ uint64_t sum_proper_divisors(uint64_t n) {
     uint64_t sigma = 1;
     for (uint32_t p : primes) {
         uint64_t pp = p;
-        if (pp*pp > n) break;
+        if (pp * pp > n) break;
         if (n % pp == 0) {
             uint64_t term = 1, power = 1;
             while (n % pp == 0) {
@@ -50,9 +53,9 @@ uint64_t sum_proper_divisors(uint64_t n) {
 std::vector<std::pair<uint64_t,uint32_t>> factor(uint64_t x) {
     std::vector<std::pair<uint64_t,uint32_t>> factors;
     uint64_t n = x;
-    for (uint32_t p : primes) {
+    for (const uint32_t p : primes) {
         uint64_t pp = p;
-        if (pp*pp > n) break;
+        if (pp * pp > n) break;
         if (n % pp == 0) {
             uint32_t exp = 0;
             while (n % pp == 0) {
@@ -62,7 +65,7 @@ std::vector<std::pair<uint64_t,uint32_t>> factor(uint64_t x) {
             factors.emplace_back(pp, exp);
         }
     }
-    if (n > 1) factors.emplace_back(n,1);
+    if (n > 1) factors.emplace_back(n, 1);
     return factors;
 }
 
@@ -70,66 +73,89 @@ std::vector<std::pair<uint64_t,uint32_t>> factor(uint64_t x) {
 std::string format_factors(const std::vector<std::pair<uint64_t,uint32_t>>& factors) {
     std::string s;
     for (size_t i = 0; i < factors.size(); ++i) {
-        auto [p,e] = factors[i];
+        auto [p, e] = factors[i];
         s += std::to_string(p);
         if (e > 1) {
             s += '^';
             s += std::to_string(e);
         }
-        if (i+1 < factors.size()) s += '*';
+        if (i + 1 < factors.size()) s += '*';
     }
     return s;
 }
 
-int main(int argc, char* argv[]) {
+int main(const int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0]
                   << " <max_n (uint64)> [primes_file]\n";
         return 1;
     }
     uint64_t max_n = std::stoull(argv[1]);
-    std::string primes_file = argc>2 ? argv[2] : "uiprimes32.dat";
+    const std::string primes_file = argc > 2 ? argv[2] : "uiprimes32.dat";
 
     load_primes(primes_file);
 
-    std::ofstream out{"amicable_pairs.txt"};
+    // Open output once
+    static std::ofstream out{"amicable_pairs.txt"};
     if (!out) {
         std::cerr << "Error: cannot open output file\n";
         return 1;
     }
 
-    for (uint64_t n = 2; n <= max_n; ++n) {
-        uint64_t s = sum_proper_divisors(n);
-        if (s > n && s <= max_n && sum_proper_divisors(s) == n) {
-            // 1) classification
-            uint64_t g = std::gcd(n, s);
-            uint64_t M = n / g, N = s / g;
-            auto fM = factor(M), fN = factor(N);
+    // Determine number of threads
+    unsigned int num_threads = std::thread::hardware_concurrency();
+    if (num_threads == 0) num_threads = 2;
 
-            bool sqfM = true, sqfN = true;
-            for (auto &pr : fM) if (pr.second > 1) { sqfM = false; break; }
-            for (auto &pr : fN) if (pr.second > 1) { sqfN = false; break; }
+    const uint64_t range = max_n - 1;  // scanning 2..max_n
+    const uint64_t chunk = range / num_threads;
+    std::vector<std::thread> threads;
+    threads.reserve(num_threads);
 
-            bool cpM = (std::gcd(M, g) == 1);
-            bool cpN = (std::gcd(N, g) == 1);
+    for (unsigned int t = 0; t < num_threads; ++t) {
+        uint64_t start = 2 + t * chunk;
+        uint64_t end = t + 1 == num_threads ? max_n : start + chunk - 1;
 
-            bool regular = (sqfM && sqfN && cpM && cpN);
-            std::string prefix = regular ? "" : "X";
-            size_t i = fM.size(), j = fN.size();
+        threads.emplace_back([start, end, max_n] {
+            for (uint64_t n = start; n <= end; ++n) {
+                uint64_t s = sum_proper_divisors(n);
+                if (s > n && s <= max_n && sum_proper_divisors(s) == n) {
+                    // classification
+                    uint64_t g = std::gcd(n, s);
+                    uint64_t M = n / g, N = s / g;
+                    auto fM = factor(M), fN = factor(N);
 
-            // 2) print classification line
-            out   << prefix << i << ',' << j << '\n';
-            std::cout << prefix << i << ',' << j << '\n';
+                    bool sqfM = true, sqfN = true;
+                    for (auto &pr : fM) if (pr.second > 1) { sqfM = false; break; }
+                    for (auto &pr : fN) if (pr.second > 1) { sqfN = false; break; }
 
-            // 3) print the two factorizations
-            auto fn = factor(n), fs = factor(s);
-            out   << n << '=' << format_factors(fn) << '\n';
-            out   << s << '=' << format_factors(fs) << "\n\n";
+                    bool cpM = std::gcd(M, g) == 1;
+                    bool cpN = std::gcd(N, g) == 1;
 
-            std::cout << n << '=' << format_factors(fn) << '\n'
-                      << s << '=' << format_factors(fs) << "\n\n";
-        }
+                    bool regular = sqfM && sqfN && cpM && cpN;
+                    std::string prefix = regular ? "" : "X";
+                    size_t i = fM.size(), j = fN.size();
+                    std::string cls = prefix + std::to_string(i) + "," + std::to_string(j);
+
+                    // prepare factorizations
+                    auto fn = factor(n);
+                    auto fs = factor(s);
+                    std::string fn_str = format_factors(fn);
+                    std::string fs_str = format_factors(fs);
+
+                    // output under lock
+                    std::lock_guard<std::mutex> lock(io_mutex);
+                    out   << cls << '\n'
+                          << n  << '=' << fn_str << '\n'
+                          << s  << '=' << fs_str << "\n\n";
+                    std::cout << cls << '\n'
+                              << n  << '=' << fn_str << '\n'
+                              << s  << '=' << fs_str << "\n\n";
+                }
+            }
+        });
     }
+
+    for (auto &th : threads) th.join();
 
     std::cout << "Done. Results in amicable_pairs.txt\n";
     return 0;
