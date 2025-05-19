@@ -1,110 +1,180 @@
-/*
-  Utility to calculate primes that exceed uint32_t
-  As uint64_t covers extremely large number of primes,
-  the calculation takes top 32 bits of the range and writes
-  found lower 32 bits of primes into file.
-  If AABBCCDD is top 32 bits, then hierarchy is: AA/BB/CC/DD.dat
-*/
-
 #include <vector>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <iomanip>
 
-using namespace std;
+#if defined(__x86_64__)
+#  include <immintrin.h>    // AVX2
+#endif
+#if defined(__aarch64__)
+#  include <arm_neon.h>     // NEON
+#endif
 
-inline uint32_t index2int(uint32_t i) {
-    return (i<<1)+1;
+#if defined(__x86_64__)
+__attribute__((target("avx2")))
+#endif
+void collect_primes_simd(const uint64_t* sieve,
+                         uint64_t words,
+                         uint64_t low,
+                         uint64_t seg_bits,
+                         std::vector<uint32_t>& out_vec)
+{
+    uint64_t w = 0;
+#ifdef __AVX2__
+    for (; w + 4 <= words; w += 4) {
+        __m256i v = _mm256_loadu_si256((__m256i*)&sieve[w]);
+        if (_mm256_testz_si256(v, v)) continue;
+        for (int k = 0; k < 4; ++k) {
+            uint64_t word = sieve[w + k];
+            while (word) {
+                int bit = __builtin_ctzll(word);
+                uint64_t idx = (w + k)*64 + bit;
+                out_vec.push_back(uint32_t(low + 2*idx));
+                word &= word - 1;
+            }
+        }
+    }
+#elif defined(__aarch64__)
+    for (; w + 2 <= words; w += 2) {
+        uint64x2_t v = vld1q_u64(&sieve[w]);
+        if ((vgetq_lane_u64(v,0)|vgetq_lane_u64(v,1))==0) continue;
+        for (int k = 0; k < 2; ++k) {
+            uint64_t word = sieve[w + k];
+            while (word) {
+                int bit = __builtin_ctzll(word);
+                uint64_t idx = (w + k)*64 + bit;
+                out_vec.push_back(static_cast<uint32_t>(low + 2 * idx));
+                word &= word - 1;
+            }
+        }
+    }
+#endif
+    for (; w < words; ++w) {
+        uint64_t word = sieve[w];
+        while (word) {
+            int bit = __builtin_ctzll(word);
+            uint64_t idx = w*64 + bit;
+            out_vec.push_back(static_cast<uint32_t>(low + 2 * idx));
+            word &= word - 1;
+        }
+    }
 }
 
-inline uint32_t int2index(uint32_t i) {
-    return (i-1)>>1;
-}
-
-inline void write(ofstream &fh, uint32_t p) {
-    fh.write(reinterpret_cast <char*> (&p), sizeof(uint32_t));
-}
-
-int main(int argc, char** argv) {
-    const uint32_t MAX_VALUE = 0xFFFFFFFF;
-    const uint32_t MAX_INDEX = int2index(MAX_VALUE);
-
-    vector<bool> primes(MAX_INDEX, true);
-
-    if(argc != 2) {
-        cout << "Run this utility as follows:\n\t"
-             << argv[0]
-             << " {slice_number}\nWhere {slice_number} is 0..4294967295 number which is top 32 bits of prime numbers to be found"
-             << endl;
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        std::cerr << "Usage: " << argv[0] << " {slice_number}\n";
         return 1;
     }
-    uint64_t slice_number;
-    stringstream(argv[1]) >> slice_number;
-    unsigned short p3 = slice_number % 0x100;
-    unsigned short p2 = (slice_number >> 8) % 0x100;
-    unsigned short p1 = (slice_number >> 16) % 0x100;
-    unsigned short p0 = slice_number >> 24;
 
-    ostringstream path;
-    path << hex
-         << setfill('0') << setw(2) << p0 << "/"
-         << setfill('0') << setw(2) << p1 << "/"
-         << setfill('0') << setw(2) << p2 << "/";
-    cout << path.str() << endl;
-
-    ostringstream fpath;
-    fpath << path.str() << hex << setfill('0') << setw(2) << p3 << ".dat";
-
-    if(system(("mkdir -p " + path.str()).c_str())) {
-        cout << "Cannot create folder: " << path.str() << endl;
-        return 2;
+    // Parse slice
+    uint64_t slice = 0;
+    try { slice = std::stoull(argv[1]); }
+    catch (...) {
+        std::cerr << "Invalid slice number\n";
+        return 1;
     }
 
-    // first load known uint32_t primes
-    cout << "Loading primes..." << endl;
-    ifstream ih ("uiprimes32.dat", ios::in | ios::binary);
+    // Build AA/BB/CC and DD paths
+    unsigned b0 = slice>>24&0xFF,
+             b1 = slice>>16&0xFF,
+             b2 = slice>> 8&0xFF,
+             b3 = slice    &0xFF;
 
-    ih.seekg(0, ios::end);
-    size_t size = ih.tellg();
-    uint32_t num_primes = size/sizeof(uint32_t) - 1;
-    auto* prime32 = new uint32_t[num_primes];
+    std::ostringstream dir_ss;
+    dir_ss << std::uppercase<<std::hex<<std::setw(2)<<std::setfill('0')
+           << b0<<"/"<<std::setw(2)<<b1<<"/"<<std::setw(2)<<b2;
+    std::string dir = dir_ss.str();
+    std::filesystem::create_directories(dir);
 
-    ih.seekg(0);
-    ih.read(reinterpret_cast <char*> (prime32), num_primes * sizeof(uint32_t));
-    ih.close();
+    std::ostringstream f_ss;
+    f_ss << dir<<"/"
+         << std::uppercase<<std::hex<<std::setw(2)<<std::setfill('0')
+         << b3<<".dat";
+    std::string out_path = f_ss.str();
 
-    cout << num_primes << " primes loaded to prime32 array" << endl;
+    // Load 32-bit primes
+    std::ifstream in32("uiprimes32.dat", std::ios::binary);
+    if (!in32) {
+        std::cerr << "Cannot open uiprimes32.dat\n";
+        return 1;
+    }
+    in32.seekg(0, std::ios::end);
+    size_t count32 = in32.tellg()/sizeof(uint32_t);
+    in32.seekg(0);
+    std::vector<uint32_t> small_primes(count32);
+    in32.read(reinterpret_cast<char*>(small_primes.data()),
+              count32*sizeof(uint32_t));
+    in32.close();
 
-    if(system(("touch " + fpath.str()).c_str())) {
-        cout << "Cannot create slice file:" << fpath.str() << endl;
-        return 3;
+    // Open slice output
+    std::ofstream out(out_path, std::ios::binary);
+    if (!out) {
+        std::cerr << "Cannot open " << out_path << "\n";
+        return 1;
+    }
+    if (slice == 0) {
+        uint32_t two = 2;
+        out.write(reinterpret_cast<char*>(&two), sizeof(two));
     }
 
-    ofstream oh (fpath.str().c_str(), ofstream::out | ofstream::binary);
-    cout << "Slice file to work with: " << fpath.str().c_str() << endl;
+    // 64-bit interval
+    uint64_t low64   = slice << 32;
+    uint64_t high64  = ((slice+1)<<32) - 1;
+    uint64_t low_odd = low64 | 1ULL;
+    uint64_t total_odds = (high64 - low_odd)/2 + 1;
 
-    for (uint32_t i=1; i < num_primes; ++i) { // skipping 2
-        uint64_t d = prime32[i]; // prime divisor
-        if ((d*d)>>32 > slice_number) {
-            break; // divisor is too big for current slice
+    // Segment size: 32 MiB → bits
+    constexpr uint64_t SEG_BYTES = 32ULL*1024*1024;
+    constexpr uint64_t SEG_BITS  = SEG_BYTES*8;
+    uint64_t num_segs = (total_odds + SEG_BITS -1)/SEG_BITS;
+
+    std::vector<uint64_t> sieve;
+    std::vector<uint32_t> segment_primes;
+    segment_primes.reserve(SEG_BITS/16);
+
+    for (uint64_t seg = 0; seg < num_segs; ++seg) {
+        uint64_t bit0  = seg * SEG_BITS;
+        uint64_t bits  = std::min(SEG_BITS, total_odds - bit0);
+        uint64_t start = low_odd + 2*bit0;
+        uint64_t words = (bits + 63)/64;
+
+        // Initialize all bits = “prime”
+        sieve.assign(words, ~0ULL);
+        if (bits & 63)
+            sieve[words-1] = ~0ULL >> (64 - (bits & 63));
+
+        // Clear “1” in slice=0, seg=0
+        if (slice==0 && seg==0) sieve[0] &= ~1ULL;
+
+        // Mark composites
+        for (uint32_t prime : small_primes) {
+            if (prime < 3) continue;
+            uint64_t prime_sq = static_cast<uint64_t>(prime) * prime;
+            if (prime_sq > high64) break;
+
+            // Overflow-safe first multiple ≥ start
+            __uint128_t rem  = static_cast<__uint128_t>(start) % prime;
+            __uint128_t m128 = rem ? static_cast<__uint128_t>(start) + (prime - rem)
+                                   : static_cast<__uint128_t>(start);
+            if (m128 < prime_sq) m128 = prime_sq;
+            if ((m128 & 1) == 0) m128 += prime;
+            uint64_t bi = static_cast<uint64_t>((m128 - start) >> 1);
+
+            for (uint64_t b = bi; b < bits; b += prime) {
+                sieve[b>>6] &= ~(1ULL << (b & 63));
+            }
         }
-        uint64_t mod = (slice_number<<32)%d;
-        uint32_t shift = slice_number?int2index(d-mod+d*(mod%2)):int2index(d)+d;
-        for (uint32_t j=shift; j<=MAX_INDEX; j+=d) {
-            primes[j]=false;
-        }
+
+        // Collect & write
+        segment_primes.clear();
+        collect_primes_simd(sieve.data(), words, start, bits, segment_primes);
+        out.write(reinterpret_cast<char*>(segment_primes.data()),
+                  segment_primes.size() * sizeof(uint32_t));
     }
 
-    if (slice_number == 0) {
-        write(oh, 2);
-        primes[0]=false; // 1 is not prime
-    }
-    for (uint64_t i=0; i<MAX_INDEX; ++i) {
-        if (primes[i]) {
-            write(oh, index2int(i));
-        }
-    }
-
-    oh.close();
+    out.close();
+    std::cout << "Slice 0x" << std::hex << slice
+              << " → " << out_path << "\n";
     return 0;
 }
