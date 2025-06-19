@@ -47,9 +47,9 @@ X2,2
 957871508=2^2*11*29*71*97*109
 998051692=2^2*11*53*139*3079
 
-Done. Results in amicable_pairs.txt
+Done. Found 564 pairs. Results in amicable_pairs.txt
 
-real    2m55.655s
-user    0m0.046s
-sys     0m0.016
+real    2m44.512s
+user    0m0.031s
+sys     0m0.031s
 ```
