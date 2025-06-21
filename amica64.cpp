@@ -506,7 +506,7 @@ int main(const int argc, char* argv[]) {
         std::cout       << p.classification_str << '\n' << p.n  << '=' << p.n_factors_str << '\n' << p.s  << '=' << p.s_factors_str << "\n\n";
     }
 
-    std::cout << "Done. Results in amicable_pairs.txt\n";
+    std::cout << "Done. Found " << all_found_pairs.size() << " pairs. Results in amicable_pairs.txt\n";
     if (out_file_stream.is_open()) out_file_stream.close();
     return 0;
 }
