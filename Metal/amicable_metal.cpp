@@ -249,8 +249,8 @@ int main(int argc, char* argv[]) {
                 if (sn_of_m == n) {
                     auto nf = factor(n);
                     auto sf = factor(m);
-                    auto cls = classify_amicable_pair(n, s, nf, sf);
-                    all_found_pairs.push_back({n, m, cls.type_str, format_factors(nf), format_factors(sf)});
+                    auto cls = classify_amicable_pair(n, m, nf, sf);
+                    all_found_pairs.push_back({n, m, cls, format_factors(nf), format_factors(sf)});
                 }
             }
         }

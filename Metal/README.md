@@ -22,18 +22,17 @@ clang++ amicable_metal.cpp -o amicable_metal \
 
 ```shell
 % clang++ -std=c++17 -O3 -o amicable_metal amicable_metal.cpp -I./metal-cpp -framework Foundation -framework Metal -framework QuartzCore
-% time ./amicable_metal 100000000 2 
-Generating primes in memory up to 4294967295 (using 2MB segments, 8 threads)...
-Processed segment 128/128
-All segments processed. Consolidating primes...
-Prime generation complete. Found 203280221 primes.
+% time ./amicable_metal 1000000000
+Generating primes up to 31623...
+Prime generation complete. Found 3401 primes.
 Using GPU: Apple M1
-Optimizing for Metal: Using 1229 primes (up to sqrt(100000000)) in shared memory.
-GPU Processing in batches of 2097152 elements.
-Processing batch: 98566144 to 100000000...
+Transferring 3401 primes to the device.
+GPU Processing in batches of 8388608 elements.
+Processing batch: 998244353 to 1000000000...
 All batches processed.
-Filtering potential pairs on CPU...
-GPU computation and filtering complete.
+
+--- Found 586 Amicable Pairs ---
+
 2,1
 220=2^2*5*11
 284=2^2*71
@@ -42,18 +41,14 @@ X2,2
 1184=2^5*37
 1210=2*5*11^2
 ...
-2,2
-95629904=2^4*37*67*2411
-97580944=2^4*67*227*401
+X4,2
+994945490=2*5*7^2*11^2*97*173
+1331936326=2*7^2*881*15427
 
-2,3
-96304845=3*5*7^2*13*10079
-96747315=3*5*7^2*23*59*97
+4,5
+996088412=2^2*11*17*151*8819
+1030959268=2^2*23*37*41*83*89
 
-2,2
-97041735=3^2*5*7*71*4339
-97945785=3^2*5*7*239*1301
-
-Done. Found 231 pairs. Results in amicable_pairs.txt
-./amicable_metal 100000000 2  9.55s user 0.83s system 16% cpu 1:02.13 total
+Done. Found a total of 586 pairs. Results also saved in amicable_pairs.txt
+./amicable_metal 1000000000  74.57s user 2.59s system 4% cpu 28:44.76 total
 ```
