@@ -67,6 +67,7 @@ section .bss
     alignb 8
     pinv_tab          resq 30000
     plim_tab          resq 30000
+    psq_tab           resq 30000    ; p^2: replaces MUL in the trial-division probe
 
     ; Thread management
     thread_handles    resq num_threads
@@ -206,6 +207,10 @@ main:
     mov rax, -1
     div rcx                 ; (2^64-1) / p
     lea rdx, [rel plim_tab]
+    mov [rdx + rbx*8], rax
+    mov rax, rcx
+    imul rax, rcx           ; p^2
+    lea rdx, [rel psq_tab]
     mov [rdx + rbx*8], rax
     inc rbx
     jmp .build_tabs
@@ -732,6 +737,9 @@ AmicableThread:
     jmp .check_pair
 
 .compute_ssn:
+    mov eax, esi
+    add eax, edi            ; N
+    lea rdx, [r13 + rax]    ; abort bound: a match needs sigma(M) == N + M
     mov rcx, r13
     call SumProperDivisors
     cmp rax, -1
@@ -1133,9 +1141,12 @@ FactorizeNumber:
 
 ; -------------------------------------------------------------------
 ; SumProperDivisors - Fallback S(N), DIV-free via pinv/plim tables
-; RCX = N (preserved), returns RAX = S(N) or -1 on 64-bit overflow
+; RCX = N (preserved), RDX = abort bound (the running sigma product
+; can only grow, so once it exceeds the bound no match is possible).
+; Returns RAX = S(N), 0 on early abort, or -1 on 64-bit overflow.
 ; -------------------------------------------------------------------
 SumProperDivisors:
+    push rbp
     push rbx
     push rsi
     push rdi
@@ -1144,6 +1155,7 @@ SumProperDivisors:
     push r14
     push r15
 
+    mov rbp, rdx            ; bound = N + M for the amicable check
     mov r12, rcx
     mov r13, 1
 
@@ -1160,6 +1172,8 @@ SumProperDivisors:
     test r12, 1
     jz .div_2
     mov r13, r8
+    cmp r13, rbp
+    ja .no_match
 
 .skip_2:
     xor rsi, rsi
@@ -1169,12 +1183,8 @@ SumProperDivisors:
 .f_loop:
     cmp esi, edi
     jae .ovf
-    mov ebx, [r14 + rsi*4]
-
-    mov rax, rbx
-    mul rbx
-    cmp rax, r12
-    ja .f_end
+    cmp r12, [r14 + (psq_tab - base_primes) + rsi*8]
+    jb .f_end               ; p^2 > remaining
 
     mov rax, r12
     imul rax, [r14 + (pinv_tab - base_primes) + rsi*8]
@@ -1182,6 +1192,7 @@ SumProperDivisors:
     ja .n_p                 ; p does not divide remaining
 
     ; p divides remaining; RAX is already remaining / p
+    mov ebx, [r14 + rsi*4]  ; p
     mov r15, [r14 + (pinv_tab - base_primes) + rsi*8]
     mov r10, [r14 + (plim_tab - base_primes) + rsi*8]
     mov r8, 1
@@ -1204,6 +1215,8 @@ SumProperDivisors:
     mul r8
     jc .ovf
     mov r13, rax
+    cmp r13, rbp
+    ja .no_match            ; sigma already exceeds N + M: cannot match
 .n_p:
     inc rsi
     jmp .f_loop
@@ -1226,6 +1239,18 @@ SumProperDivisors:
     pop rdi
     pop rsi
     pop rbx
+    pop rbp
+    ret
+.no_match:
+    xor eax, eax
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rdi
+    pop rsi
+    pop rbx
+    pop rbp
     ret
 .ovf:
     mov rax, -1
@@ -1236,4 +1261,5 @@ SumProperDivisors:
     pop rdi
     pop rsi
     pop rbx
+    pop rbp
     ret
