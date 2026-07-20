@@ -47,7 +47,7 @@ X2,2
 
 Checked pairs in the range 2..4294967295; found: 1043 amicable pairs
 
-real    2m18.588s
-user    36m45.910s
-sys     0m1.403s
+real    1m8.768s
+user    18m11.431s
+sys     0m2.314s
 ```
