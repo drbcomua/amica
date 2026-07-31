@@ -1442,9 +1442,14 @@ Lsd_skip2:
     add  x13, x13, _plim_tab@PAGEOFF
     adrp x14, _psq_tab@PAGE
     add  x14, x14, _psq_tab@PAGEOFF
+    mov  x15, #128                  // prime index at which to Miller-Rabin
+                                    // the remaining cofactor (see Lsd_mr_check)
 Lsd_floop:
     cmp x0, x10
     b.hs Lsd_fend
+    cmp x0, x15
+    b.eq Lsd_mr_check
+Lsd_floop_body:
     ldr x2, [x14, x0, lsl #3]
     cmp x20, x2
     b.lo Lsd_fend
@@ -1479,6 +1484,9 @@ Lsd_strip:
     add  x4, x20, #1
     cmp  x2, x4
     b.lo Lsd_no_match
+    cmp  x20, #0x100, lsl #12       // cofactor still > 2^20: re-arm the
+    b.ls Lsd_np                     // Miller-Rabin trigger 128 primes ahead
+    add  x15, x0, #128
 Lsd_np:
     add x0, x0, #1
     b Lsd_floop
@@ -1498,4 +1506,116 @@ Lsd_no_match:
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     ldp x29, x30, [sp], #16
+    ret
+
+// Reached (once armed) after 128 consecutive base primes failed to divide
+// the cofactor: it then very likely has no small factor at all, so settle
+// it with one Miller-Rabin test instead of scanning on to sqrt(cofactor).
+Lsd_mr_check:
+    mov  x15, #-1                   // disarm (fires at most once per arming)
+    cmp  x20, #0x100, lsl #12       // small cofactor: rest of scan is cheap
+    b.ls Lsd_floop_body
+    stp  x0, x10, [sp, #-48]!       // save scan state (caller-saved regs)
+    stp  x11, x12, [sp, #16]
+    stp  x13, x14, [sp, #32]
+    mov  x0, x20
+    bl   _mr_is_prime
+    cbnz x0, Lsd_mr_prime
+    ldp  x13, x14, [sp, #32]
+    ldp  x11, x12, [sp, #16]
+    ldp  x0, x10, [sp], #48
+    mov  x15, #-1                   // _mr_is_prime clobbered x15: re-disarm
+    b    Lsd_floop_body
+Lsd_mr_prime:
+    add  sp, sp, #48                // cofactor is prime: Lsd_fend finishes
+    b    Lsd_fend                   // with sigma *= (cofactor+1) as usual
+
+// =====================================================================
+// _mr_is_prime(x0 = n; n odd, 2^20 < n < 2^35) -> x0 = 1 if prime, else 0.
+// Deterministic Miller-Rabin with bases {2,3,5,7,11}, exact for all
+// n < 2,152,302,898,747 (Jaeschke) - far above any cofactor here, since
+// sigma(N) < 4N for N < 2^32 bounds the argument below 2^35.
+// Arithmetic is Montgomery multiplication mod n (R = 2^64), reusing the
+// Newton-iteration inverse trick from _build_recip_tables.
+// Leaf function; clobbers x2-x15 only.
+// =====================================================================
+_mr_is_prime:
+    mov  x2, x0                     // n
+    mov  x3, x2                     // Newton for n^-1 mod 2^64 (5 doublings)
+    mov  x12, #5
+Lmr_newton:
+    mul  x13, x2, x3
+    mov  x14, #2
+    sub  x13, x14, x13
+    mul  x3, x3, x13
+    subs x12, x12, #1
+    b.ne Lmr_newton
+    neg  x3, x3                     // -(n^-1) mod 2^64, as REDC wants
+    mov  x13, #-1                   // x4 = R mod n (= mont(1))
+    udiv x14, x13, x2
+    msub x4, x14, x2, x13
+    add  x4, x4, #1                 // n odd, so never wraps to 0
+    sub  x5, x2, x4                 // x5 = mont(n-1)
+    sub  x6, x2, #1                 // n-1 = d * 2^s
+    rbit x7, x6
+    clz  x7, x7                     // s
+    lsr  x6, x6, x7                 // d
+    movz x8, #0x7532                // bases 2,3,5,7,11, one nibble each,
+    movk x8, #0xB, lsl #16          // consumed low nibble first
+Lmr_base_loop:
+    and  x9, x8, #15                // a
+    lsr  x8, x8, #4
+    mul  x9, x9, x4                 // mont(a) = a*R mod n (a*R < 2^40)
+    udiv x13, x9, x2
+    msub x9, x13, x2, x9
+    mov  x10, x4                    // x = mont(1)
+    mov  x11, x6                    // remaining bits of d
+Lmr_pow_loop:
+    tbz  x11, #0, Lmr_pow_sq
+    mul   x12, x10, x9              // x = REDC(x * base)
+    umulh x13, x10, x9
+    mul   x14, x12, x3
+    umulh x14, x14, x2
+    cmp   x12, #1                   // carry = (lo != 0)
+    adc   x10, x13, x14
+    subs  x12, x10, x2
+    csel  x10, x12, x10, hs
+Lmr_pow_sq:
+    lsr  x11, x11, #1
+    cbz  x11, Lmr_pow_done
+    mul   x12, x9, x9               // base = REDC(base^2)
+    umulh x13, x9, x9
+    mul   x14, x12, x3
+    umulh x14, x14, x2
+    cmp   x12, #1
+    adc   x9, x13, x14
+    subs  x12, x9, x2
+    csel  x9, x12, x9, hs
+    b    Lmr_pow_loop
+Lmr_pow_done:
+    cmp  x10, x4                    // a^d == 1 ?
+    b.eq Lmr_base_pass
+    cmp  x10, x5                    // a^d == n-1 ?
+    b.eq Lmr_base_pass
+    sub  x12, x7, #1                // else square s-1 more times,
+Lmr_sq_loop:                        // looking for n-1
+    cbz  x12, Lmr_composite
+    mul   x13, x10, x10
+    umulh x14, x10, x10
+    mul   x15, x13, x3
+    umulh x15, x15, x2
+    cmp   x13, #1
+    adc   x10, x14, x15
+    subs  x13, x10, x2
+    csel  x10, x13, x10, hs
+    cmp  x10, x5
+    b.eq Lmr_base_pass
+    sub  x12, x12, #1
+    b    Lmr_sq_loop
+Lmr_composite:
+    mov  x0, #0
+    ret
+Lmr_base_pass:
+    cbnz x8, Lmr_base_loop
+    mov  x0, #1
     ret
