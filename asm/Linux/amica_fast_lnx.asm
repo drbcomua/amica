@@ -1174,6 +1174,18 @@ SumProperDivisors:
     mov r13, r8
     cmp r13, rbp
     ja .no_match
+    ; sigma(M) = r13 * sigma(cofactor), so a match needs r13 | bound
+    ; and bound/r13 (the required sigma(cofactor)) >= cofactor+1.
+    mov rax, rbp
+    xor edx, edx
+    div r13
+    test rdx, rdx
+    jnz .no_match
+    cmp r12, 1
+    jbe .skip_2
+    lea rdx, [r12 + 1]
+    cmp rax, rdx
+    jb .no_match
 
 .skip_2:
     xor rsi, rsi
@@ -1217,6 +1229,17 @@ SumProperDivisors:
     mov r13, rax
     cmp r13, rbp
     ja .no_match            ; sigma already exceeds N + M: cannot match
+    ; same divisibility + lower-bound abort as after the 2-strip
+    mov rax, rbp
+    xor edx, edx
+    div r13
+    test rdx, rdx
+    jnz .no_match
+    cmp r12, 1
+    jbe .n_p
+    lea rdx, [r12 + 1]
+    cmp rax, rdx
+    jb .no_match
 .n_p:
     inc rsi
     jmp .f_loop
