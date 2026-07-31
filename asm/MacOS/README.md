@@ -107,11 +107,8 @@ Checked pairs in the range 2..4294967295; found: 1043 amicable pairs
 ./amica_fast_mac  132.96s user 2.22s system 531% cpu 25.434 total
 ```
 
-(The 8-thread M1 finishes the search in ~25s wall-clock, well ahead of
-the 16-thread desktop i5-14400F reference's 44s. Most of that comes from
+(The 8-thread M1 finishes the search in ~25s wall-clock. Most of that comes from
 number-theoretic early aborts in `SumProperDivisors` - a match requires
 the running sigma product to divide N+M exactly, and the remaining
 quotient to be at least cofactor+1 - which kill most trial-division
-calls before their prime scan starts. These aborts are not yet ported
-back to the Linux version, so the comparison flatters the M1; before
-them, the same search here took 1m45s.)
+calls before their prime scan starts.)
