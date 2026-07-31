@@ -1191,10 +1191,15 @@ SumProperDivisors:
     xor rsi, rsi
     lea r14, [rel base_primes]
     mov edi, dword [rel base_prime_cnt]
+    mov r11, 128            ; prime index at which to Miller-Rabin the
+                            ; remaining cofactor (see .mr_check)
 
 .f_loop:
     cmp esi, edi
     jae .ovf
+    cmp rsi, r11
+    je .mr_check
+.f_loop_body:
     cmp r12, [r14 + (psq_tab - base_primes) + rsi*8]
     jb .f_end               ; p^2 > remaining
 
@@ -1240,6 +1245,9 @@ SumProperDivisors:
     lea rdx, [r12 + 1]
     cmp rax, rdx
     jb .no_match
+    cmp r12, 0x100000       ; cofactor still > 2^20: re-arm the
+    jbe .n_p                ; Miller-Rabin trigger 128 primes ahead
+    lea r11, [rsi + 128]
 .n_p:
     inc rsi
     jmp .f_loop
@@ -1285,4 +1293,156 @@ SumProperDivisors:
     pop rsi
     pop rbx
     pop rbp
+    ret
+
+; Reached (once armed) after 128 consecutive base primes failed to divide
+; the cofactor: it then very likely has no small factor at all, so settle
+; it with one Miller-Rabin test instead of scanning on to sqrt(cofactor).
+.mr_check:
+    mov r11, -1             ; disarm (fires at most once per arming)
+    cmp r12, 0x100000       ; small cofactor: rest of scan is cheap
+    jbe .f_loop_body
+    mov rax, r12
+    call mr_is_prime        ; preserves everything except RAX
+    test rax, rax
+    jnz .f_end              ; prime: .f_end applies sigma *= (cofactor+1)
+    jmp .f_loop_body        ; composite: resume scanning where we left off
+
+; -------------------------------------------------------------------
+; mr_is_prime - RAX = n (odd, 2^20 < n < 2^35) -> RAX = 1 if prime,
+; else 0. Deterministic Miller-Rabin with bases {2,3,5,7,11}, exact
+; for all n < 2,152,302,898,747 (Jaeschke) - far above any cofactor
+; here, since sigma(N) < 4N for N < 2^32 bounds the argument below
+; 2^35. Arithmetic is Montgomery multiplication mod n (R = 2^64),
+; reusing the Newton-iteration inverse trick from the reciprocal
+; tables. No overflow guards needed: with n < 2^35 every intermediate
+; sum stays below 2^36. Preserves all registers except RAX.
+; -------------------------------------------------------------------
+mr_is_prime:
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov rbx, rax            ; n
+    ; n-1 = d * 2^s (done first, while CL is still free for the shift)
+    lea r8, [rbx - 1]
+    bsf rcx, r8             ; s = tzcnt(n-1)
+    mov r9, rcx
+    shr r8, cl              ; d
+    ; Newton: rcx = n^-1 mod 2^64 (5 doublings from seed n)
+    mov rcx, rbx
+    mov r10, 5
+.newton:
+    mov rax, rbx
+    imul rax, rcx
+    mov rdx, 2
+    sub rdx, rax
+    imul rcx, rdx           ; x *= 2 - n*x
+    dec r10
+    jnz .newton
+    neg rcx                 ; -(n^-1) mod 2^64, as REDC wants
+    ; rsi = R mod n (= mont(1)), rdi = n - rsi (= mont(n-1))
+    xor edx, edx
+    mov rax, -1
+    div rbx
+    lea rsi, [rdx + 1]      ; 2^64 mod n; n odd, so never wraps to 0
+    mov rdi, rbx
+    sub rdi, rsi
+    ; bases 2,3,5,7,11, one nibble each, consumed low nibble first
+    mov r10, 0xB7532
+.base_loop:
+    mov r11, r10
+    and r11, 15             ; a
+    shr r10, 4
+    mov rax, r11            ; mont(a) = a * (R mod n) mod n (fits: < 2^40)
+    mul rsi
+    div rbx                 ; RDX was 0 after the mul, so this is exact
+    mov r11, rdx            ; base accumulator = mont(a)
+    mov r12, rsi            ; x = mont(1)
+    mov r13, r8             ; remaining bits of d
+.pow_loop:
+    test r13, 1
+    jz .pow_sq
+    mov rax, r12            ; x = REDC(x * base)
+    mul r11
+    mov r14, rax            ; lo
+    mov r15, rdx            ; hi
+    imul rax, rcx           ; m = lo * n'
+    mul rbx                 ; RDX = high(m*n)
+    neg r14                 ; CF = (lo != 0)
+    adc r15, rdx            ; hi + high(m*n) + carry, in [0, 2n)
+    mov r12, r15
+    sub r15, rbx
+    cmovnc r12, r15         ; subtract n if the sum was >= n
+.pow_sq:
+    shr r13, 1
+    jz .pow_done
+    mov rax, r11            ; base = REDC(base^2)
+    mul r11
+    mov r14, rax
+    mov r15, rdx
+    imul rax, rcx
+    mul rbx
+    neg r14
+    adc r15, rdx
+    mov r11, r15
+    sub r15, rbx
+    cmovnc r11, r15
+    jmp .pow_loop
+.pow_done:
+    cmp r12, rsi            ; a^d == 1 ?
+    je .base_pass
+    cmp r12, rdi            ; a^d == n-1 ?
+    je .base_pass
+    mov r13, r9             ; else square s-1 more times,
+    dec r13                 ; looking for n-1
+.sq_loop:
+    test r13, r13
+    jz .composite
+    mov rax, r12            ; x = REDC(x^2)
+    mul r12
+    mov r14, rax
+    mov r15, rdx
+    imul rax, rcx
+    mul rbx
+    neg r14
+    adc r15, rdx
+    mov r12, r15
+    sub r15, rbx
+    cmovnc r12, r15
+    cmp r12, rdi
+    je .base_pass
+    dec r13
+    jmp .sq_loop
+.composite:
+    xor eax, eax
+    jmp .mr_ret
+.base_pass:
+    test r10, r10
+    jnz .base_loop
+    mov eax, 1
+.mr_ret:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
     ret
