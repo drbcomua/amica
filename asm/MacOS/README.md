@@ -104,11 +104,14 @@ X2,2
 4446000368=2^4*113*239*10289
 
 Checked pairs in the range 2..4294967295; found: 1043 amicable pairs
-./amica_fast_mac  132.96s user 2.22s system 531% cpu 25.434 total
+./amica_fast_mac  111.27s user 1.26s system 597% cpu 18.848 total
 ```
 
-(The 8-thread M1 finishes the search in ~25s wall-clock. Most of that comes from
-number-theoretic early aborts in `SumProperDivisors` - a match requires
-the running sigma product to divide N+M exactly, and the remaining
-quotient to be at least cofactor+1 - which kill most trial-division
-calls before their prime scan starts.)
+(The 8-thread M1 finishes the search in ~19s wall-clock. Most of the
+speedup comes from number-theoretic early aborts in `SumProperDivisors`
+- a match requires the running sigma product to divide N+M exactly, and
+the remaining quotient to be at least cofactor+1 - which kill most
+trial-division calls before their prime scan starts. A deterministic
+Miller-Rabin test (bases 2,3,5,7,11 in Montgomery arithmetic) then
+settles any cofactor that survives 128 primes' worth of scanning in one
+shot, instead of scanning on to sqrt(cofactor).)
