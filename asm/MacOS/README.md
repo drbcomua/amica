@@ -79,7 +79,7 @@ member's prime factorization.
 
 ## Expected result
 
-Tested on an Apple M1 (8 cores: 4 performance + 4 efficiency), 16GB RAM.
+Tested on an Apple M1 (8 cores: 4 performance + 4 efficiency), 8GB RAM.
 Every count below (prime count, largest prime, and all 1043 pairs) is an
 exact match with the Linux/x86-64 reference run:
 
@@ -95,12 +95,23 @@ X2,2
 1210=2*5*11^2
 
 ...
-Checked pairs in the range 2..4294967295; found: 1043 amicable pairs
+4,4
+4280119305=3*5*7*11*59*107*587
+4498673655=3*5*7*31*53*89*293
 
-real    1m42.629s
-user    9m54.690s
-sys     0m7.020s
+4,3
+4281566032=2^4*29*97*251*379
+4446000368=2^4*113*239*10289
+
+Checked pairs in the range 2..4294967295; found: 1043 amicable pairs
+./amica_fast_mac  132.96s user 2.22s system 531% cpu 25.434 total
 ```
 
-(The 8-thread M1 here is naturally slower than the reference's 16-thread
-desktop i5-14400F, which finished the same search in 44s.)
+(The 8-thread M1 finishes the search in ~25s wall-clock, well ahead of
+the 16-thread desktop i5-14400F reference's 44s. Most of that comes from
+number-theoretic early aborts in `SumProperDivisors` - a match requires
+the running sigma product to divide N+M exactly, and the remaining
+quotient to be at least cofactor+1 - which kill most trial-division
+calls before their prime scan starts. These aborts are not yet ported
+back to the Linux version, so the comparison flatters the M1; before
+them, the same search here took 1m45s.)

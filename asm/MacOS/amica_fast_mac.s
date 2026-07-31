@@ -1418,6 +1418,16 @@ Lsd_div2_done:
     mov x21, x9
     cmp x21, x19
     b.hi Lsd_no_match
+    // sigma(M) = x21 * sigma(cofactor), so a match needs x21 | bound
+    // and bound/x21 (the required sigma(cofactor)) >= cofactor+1.
+    udiv x2, x19, x21
+    msub x3, x2, x21, x19
+    cbnz x3, Lsd_no_match
+    cmp  x20, #1
+    b.ls Lsd_skip2
+    add  x4, x20, #1
+    cmp  x2, x4
+    b.lo Lsd_no_match
 
 Lsd_skip2:
     mov x0, #0
@@ -1460,6 +1470,15 @@ Lsd_strip:
     mul x21, x21, x7
     cmp x21, x19
     b.hi Lsd_no_match
+    // same divisibility + lower-bound abort as after the 2-strip
+    udiv x2, x19, x21
+    msub x3, x2, x21, x19
+    cbnz x3, Lsd_no_match
+    cmp  x20, #1
+    b.ls Lsd_np
+    add  x4, x20, #1
+    cmp  x2, x4
+    b.lo Lsd_no_match
 Lsd_np:
     add x0, x0, #1
     b Lsd_floop
